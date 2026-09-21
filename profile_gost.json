@@ -1,0 +1,22 @@
+{
+  "name": "ГОСТ 2.304 - прямой ISOCPEUR",
+  "oda_path": null,
+  "text": {
+    "font": "isocpeur.ttf",
+    "width": null,
+    "oblique": null,
+    "skip_styles": [],
+    "convert_shx": false,
+    "strip_inline_font": true,
+    "strip_inline_height": false,
+    "strip_inline_width": false,
+    "strip_inline_oblique": true,
+    "process_blocks": true
+  },
+  "dimensions": {
+    "enabled": true,
+    "target_style": null,
+    "clear_overrides": true,
+    "text_style": null
+  }
+}

@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Drawings are work data - never commit them
+*.dwg
+*.dxf
+*.bak
+*.dwl
+*.dwl2
+*_normalized.*
+
+# Editor / OS
+.vscode/
+Thumbs.db
+desktop.ini
+
+# PyInstaller (future .exe build)
+build/
+dist/
+*.spec
