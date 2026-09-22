@@ -1,0 +1,62 @@
+name: Сборка установщика
+
+# Запускается при метке версии (git tag v1.0.0) и вручную кнопкой в Actions.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Зависимости
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Сборка программы
+        run: python build.py
+
+      - name: Сборка установщика
+        shell: pwsh
+        run: |
+          $ver = "${{ github.ref_name }}" -replace '^v', ''
+          if ($ver -notmatch '^\d') { $ver = "0.0.0" }
+          Write-Host "Версия: $ver"
+          $iscc = Get-ChildItem "${env:ProgramFiles(x86)}\Inno Setup*\ISCC.exe",
+                                "$env:ProgramFiles\Inno Setup*\ISCC.exe" -ErrorAction SilentlyContinue |
+                  Select-Object -Last 1
+          if (-not $iscc) {
+            choco install innosetup -y --no-progress
+            $iscc = Get-ChildItem "${env:ProgramFiles(x86)}\Inno Setup*\ISCC.exe" -ErrorAction SilentlyContinue |
+                    Select-Object -Last 1
+          }
+          & $iscc.FullName "/DAppVersion=$ver" installer.iss
+
+      - name: Установщик как артефакт сборки
+        uses: actions/upload-artifact@v6
+        with:
+          name: installer
+          path: dist/*.exe
+
+      - name: Публикация в Releases
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $file = (Get-Item dist\*.exe).FullName
+          gh release create $env:GITHUB_REF_NAME $file `
+            --title $env:GITHUB_REF_NAME `
+            --notes "Установщик для Windows. Нужен установленный AutoCAD 2013 или новее - через него читаются и пишутся DWG."

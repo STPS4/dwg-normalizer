@@ -4,15 +4,23 @@ DWG Normalizer - простой интерфейс.
 """
 
 import glob
+import json
 import os
 import queue
+import sys
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 import dwg_normalizer as core
 
-APP_DIR = os.path.dirname(os.path.abspath(__file__))
+# В собранном .exe профили лежат рядом с программой, а не внутри неё
+if getattr(sys, "frozen", False):
+    APP_DIR = os.path.dirname(sys.executable)
+else:
+    APP_DIR = os.path.dirname(os.path.abspath(__file__))
+
+DEFAULT_PROFILE_FILE = "profile_gost.json"   # выбран при запуске
 
 
 class App(tk.Tk):
@@ -27,6 +35,13 @@ class App(tk.Tk):
 
         self._build()
         self._load_profiles()
+        self._check_engine()
+
+        # файл, перетащенный на ярлык программы, попадает сюда
+        if len(sys.argv) > 1 and os.path.exists(sys.argv[1]):
+            self.var_path.set(sys.argv[1])
+            self.var_batch.set(os.path.isdir(sys.argv[1]))
+
         self.after(100, self._poll)
 
     # ---------------------------------------------------------------- вёрстка
@@ -60,8 +75,13 @@ class App(tk.Tk):
         row2.pack(fill="x", padx=8, pady=6)
         self.cmb_profile = ttk.Combobox(row2, state="readonly")
         self.cmb_profile.pack(side="left", fill="x", expand=True)
+        self.cmb_profile.bind("<<ComboboxSelected>>", lambda _e: self._check_engine())
         ttk.Button(row2, text="Обзор...", width=10,
                    command=self._pick_profile).pack(side="left", padx=(6, 0))
+
+        self.var_engine = tk.StringVar(value="")
+        ttk.Label(frm_prof, textvariable=self.var_engine,
+                  foreground="#666").pack(anchor="w", padx=8, pady=(0, 6))
 
         # --- кнопки ---
         frm_btn = ttk.Frame(self)
@@ -103,13 +123,38 @@ class App(tk.Tk):
         ttk.Label(self, textvariable=self.var_status, relief="sunken",
                   anchor="w").pack(fill="x", side="bottom")
 
+    # ---------------------------------------------------------------- AutoCAD
+    def _check_engine(self):
+        """Ищет AutoCAD один раз при запуске и показывает, что нашлось."""
+        try:
+            profile = core.load_profile(self._current_profile_path())
+        except Exception:  # noqa: BLE001
+            profile = {}
+        engine = core.resolve_engine(profile)
+        if engine["kind"]:
+            self.var_engine.set(f"DWG через: {engine['label']}")
+        else:
+            self.var_engine.set("AutoCAD не найден - DWG обрабатывать нечем")
+            self.after(400, lambda: messagebox.showwarning("Не найден AutoCAD", core.NO_ENGINE_MSG))
+
     # ---------------------------------------------------------------- профили
+    @staticmethod
+    def _profile_title(path: str) -> str:
+        """В списке показываем понятное имя из самого профиля."""
+        try:
+            with open(path, "r", encoding="utf-8-sig") as f:
+                name = json.load(f).get("name")
+        except Exception:  # noqa: BLE001 - битый профиль не должен ронять окно
+            name = None
+        return name or os.path.basename(path)
+
     def _load_profiles(self):
-        files = sorted(glob.glob(os.path.join(APP_DIR, "*.json")))
-        self.profiles = files
-        names = [os.path.basename(f) for f in files]
-        self.cmb_profile["values"] = names or ["(профилей нет - встроенный)"]
-        self.cmb_profile.current(0)
+        self.profiles = sorted(glob.glob(os.path.join(APP_DIR, "*.json")))
+        titles = [self._profile_title(f) for f in self.profiles]
+        self.cmb_profile["values"] = titles or ["(профилей нет - встроенный)"]
+        files = [os.path.basename(f).lower() for f in self.profiles]
+        self.cmb_profile.current(files.index(DEFAULT_PROFILE_FILE)
+                                 if DEFAULT_PROFILE_FILE in files else 0)
 
     def _current_profile_path(self):
         if not self.profiles:
@@ -139,8 +184,9 @@ class App(tk.Tk):
         if path:
             if path not in self.profiles:
                 self.profiles.append(path)
-                self.cmb_profile["values"] = [os.path.basename(f) for f in self.profiles]
+                self.cmb_profile["values"] = [self._profile_title(f) for f in self.profiles]
             self.cmb_profile.current(self.profiles.index(path))
+            self._check_engine()
 
     # ---------------------------------------------------------------- запуск
     def _run(self, scan_only: bool):

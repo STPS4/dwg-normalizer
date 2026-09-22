@@ -1,13 +1,13 @@
 {
-  "name": "ГОСТ 2.304 - ISOCPEUR (основной)",
+  "name": "ГОСТ-шрифт cs_gost2304.shx",
   "oda_path": null,
   "text": {
-    "font": "isocpeur.ttf",
-    "font_family": "ISOCPEUR",
+    "font": "cs_gost2304.shx",
+    "font_family": null,
     "width": null,
     "oblique": null,
     "skip_styles": [],
-    "convert_shx": true,
+    "convert_shx": false,
     "strip_inline_font": true,
     "strip_inline_height": false,
     "strip_inline_width": false,
