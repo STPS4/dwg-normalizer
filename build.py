@@ -40,10 +40,11 @@ def main() -> None:
             shutil.copy2(os.path.join(HERE, name), DIST)
             copied.append(name)
 
-    print(f"\nГотово: {DIST}")
-    print(f"Профили рядом с программой: {', '.join(copied) or 'нет'}")
+    # печатаем латиницей: на сервере сборки вывод уходит в файл с кодировкой cp1252
+    print(f"\nDone: {DIST}")
+    print(f"Profiles next to the app: {', '.join(copied) or 'none'}")
     if sys.platform != "win32":
-        print("ВНИМАНИЕ: сборка не под Windows - .exe получается только на Windows.")
+        print("WARNING: not a Windows build - .exe is produced on Windows only.")
 
 
 if __name__ == "__main__":

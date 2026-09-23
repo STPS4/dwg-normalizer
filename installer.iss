@@ -1,6 +1,6 @@
-; Установщик DWG Normalizer.
-; Собирается Inno Setup 6:  ISCC.exe /DAppVersion=1.0.0 installer.iss
-; Ставится в профиль пользователя, права администратора не нужны.
+; DWG Normalizer installer.
+; Build with Inno Setup 6:  ISCC.exe /DAppVersion=1.0.0 installer.iss
+; Installs into the user profile, no administrator rights required.
 
 #define AppName "DWG Normalizer"
 #ifndef AppVersion

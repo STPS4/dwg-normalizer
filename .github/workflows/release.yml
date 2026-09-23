@@ -12,6 +12,8 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+    env:
+      PYTHONIOENCODING: utf-8   # чтобы русский текст в выводе не ронял сборку
 
     steps:
       - uses: actions/checkout@v6
