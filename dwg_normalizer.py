@@ -161,7 +161,7 @@ def _console_text(raw: bytes) -> str:
 
 
 def _run_acad(acad: str, drawing: str, commands: list[str], work: str,
-              result: str, what: str) -> None:
+              result: str, what: str) -> str:
     """Открывает чертёж в accoreconsole, выполняет команды, проверяет результат."""
     script = os.path.join(work, "run.scr")
     with open(script, "w", encoding="ascii", newline="\r\n") as f:
@@ -175,10 +175,12 @@ def _run_acad(acad: str, drawing: str, commands: list[str], work: str,
         )
     except subprocess.TimeoutExpired:
         raise RuntimeError(f"AutoCAD не уложился в {ACAD_TIMEOUT // 60} мин ({what})") from None
+    text = _console_text(proc.stdout)
     if not os.path.isfile(result):
-        lines = [ln for ln in _console_text(proc.stdout).splitlines() if ln.strip()]
+        lines = [ln for ln in text.splitlines() if ln.strip()]
         tail = "\n".join(lines[-12:])
         raise RuntimeError(f"AutoCAD не смог выполнить {what}. Последние строки консоли:\n{tail}")
+    return text
 
 
 # --------------------------------------------------------------------------
@@ -205,6 +207,8 @@ DEFAULT_PROFILE = {
     "acad_path": None,      # путь к accoreconsole.exe; None = найти автоматически
     "oda_path": None,       # запасной ODA File Converter; None = найти автоматически
     "dwg_formats": {},      # дополнения к таблице форматов DWG, если выйдет новый
+    "write_mode": "autocad",  # autocad = правки вносит AutoCAD прямо в DWG; dxf = пересборка через DXF
+    "verify": True,         # после сохранения перечитать результат и сверить правки
     "text": {
         "font": "isocpeur.ttf",
         "font_family": "ISOCPEUR",  # имя семейства того же шрифта (как в AutoCAD)
@@ -237,7 +241,7 @@ def load_profile(path: str | None) -> dict:
     for section in ("text", "dimensions"):
         if section in user:
             profile[section].update(user[section])
-    for key in ("name", "acad_path", "oda_path", "dwg_formats"):
+    for key in ("name", "acad_path", "oda_path", "dwg_formats", "write_mode", "verify"):
         if key in user:
             profile[key] = user[key]
     return profile
@@ -491,6 +495,32 @@ def clean_mtext(raw: str, cfg: dict) -> str:
     return out
 
 
+def mtext_pairs(text: str, cfg: dict, retarget_family: str | None = None) -> list[tuple[str, str]]:
+    """Какие inline-коды в тексте MTEXT на что заменить ("" - вырезать).
+    Правка задаётся заменами, а не готовым текстом: так её можно передать
+    в AutoCAD, не перенося туда сам текст надписи."""
+    pairs: dict[str, str] = {}
+    for m in RE_FONT.finditer(text):
+        code = m.group(0)
+        if cfg.get("strip_inline_font", True):
+            pairs[code] = ""
+        elif retarget_family:
+            pairs[code] = retarget_font_code(code, retarget_family)
+    for rx, key, default in ((RE_HEIGHT, "strip_inline_height", False),
+                             (RE_WIDTH, "strip_inline_width", False),
+                             (RE_OBLIQUE, "strip_inline_oblique", True)):
+        if cfg.get(key, default):
+            for m in rx.finditer(text):
+                pairs[m.group(0)] = ""
+    return [(k, v) for k, v in pairs.items() if k != v]
+
+
+def apply_pairs(text: str, pairs: list[tuple[str, str]]) -> str:
+    for old, new in pairs:
+        text = text.replace(old, new)
+    return text
+
+
 # Кодировка и pitch&family для кириллицы - так их пишет сам AutoCAD (c204, p34)
 DEFAULT_CHARSET = 204
 DEFAULT_PITCH = 34
@@ -528,7 +558,10 @@ def sync_style_family(style, family: str | None) -> bool:
     return True
 
 
-def normalize(doc, profile: dict, rep: Report | None = None) -> Report:
+def normalize(doc, profile: dict, rep: Report | None = None,
+              mtext_plan: dict | None = None) -> Report:
+    """Нормализует чертёж в памяти. mtext_plan, если передан, заполняется
+    заменами в MTEXT по хэндлам - для передачи правок в AutoCAD."""
     rep = rep or Report()
     tcfg = profile["text"]
     dcfg = profile["dimensions"]
@@ -608,16 +641,16 @@ def normalize(doc, profile: dict, rep: Report | None = None) -> Report:
                 continue
             old = e.text
             if e.dxf.get("style", "Standard").lower() in target_styles:
-                new = clean_mtext(old, tcfg)
+                pairs = mtext_pairs(old, tcfg)
             else:
-                new = clean_mtext(old, keep_font_cfg)
-                if retarget:
-                    new = RE_FONT.sub(
-                        lambda m: retarget_font_code(m.group(0), target_family), new)
-                elif RE_FONT.search(old):
+                pairs = mtext_pairs(old, keep_font_cfg, target_family if retarget else None)
+                if not retarget and RE_FONT.search(old):
                     rep.count("mtext_font_left")
+            new = apply_pairs(old, pairs)
             if new != old:
                 e.text = new
+                if mtext_plan is not None:
+                    mtext_plan[e.dxf.handle] = pairs
                 rep.count("mtext")
                 if rep.changes["mtext"] <= 10:  # показываем первые 10 примеров
                     rep.add(f"  [{where}] {old[:70]!r}")
@@ -699,10 +732,21 @@ def process_file(src: str, profile: dict, dst: str | None = None,
         rep.add()
         rep.add("=" * 50)
         rep.add()
-        normalize(doc, profile, rep)
-
         dst = dst or output_path(src)
-        save_drawing(doc, dst, engine)
+
+        if (engine and engine["kind"] == "autocad"
+                and profile.get("write_mode", "autocad") == "autocad"):
+            # Правки вносит сам AutoCAD прямо в DWG: чертёж не пересобирается
+            # через DXF, поэтому сторонние объекты (Architecture, СПДС) не страдают.
+            import acad_edit
+            before = acad_edit.snapshot(doc)
+            plan: dict = {}
+            normalize(doc, profile, rep, mtext_plan=plan)
+            acad_edit.apply_and_save(src, doc, before, plan, dst, engine, rep,
+                                     verify=profile.get("verify", True))
+        else:
+            normalize(doc, profile, rep)
+            save_drawing(doc, dst, engine)
         rep.add()
         rep.add(f"✓ Сохранено: {dst}")
 
